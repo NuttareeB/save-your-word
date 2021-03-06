@@ -1,1 +1,9 @@
-# save-your-word
+# Save Your Words
+
+Languages, being a communication medium, play an important role in human lives. Many tools out there try to make sentences more concise, aiming for the sentences to be easier for readers to understand. However, we propose an idea of expanding sentences and paragraphs whilst also preserving the original meaning or intent of the text. There are many challenges in this project. Some of them are preserving the grammar and sentence structure, preserving the meaning and context(the measure of which is dependent on humans) and, avoiding plagiarism in the generation of new sentences.
+
+Through this project we want to represent ideas in a linguistically more elegant way. One example could be that exams like TOEFL/IELTS require us to use fancy words or sentence forms which we do not use in daily lives while communicating. Even research papers in a particular field have a language that people usually follow. That being said, each field would have some writing standards or language in their literature. Such tasks thus require insertion of words in the basic form of text and/or substitution of some words with another. Here, we want to build a model which can improve the level of English of the text provided or rather make the language conform to the literature. Additionally, we want to expand the sentences to make them longer and keep the semantic sense of the sentence. Whilst doing this, we need to also make sure that we do not end up plagiarizing from the corpus itself.
+
+We are using the [Language-Net](https://lanwuwei.github.io/Twitter-URL-Corpus/) dataset which is a collection of sentence level paraphrases from Twitter. Their corpus is the largest up to date with 51,524 human annotated sentence pairs: 42200 for training and 9324 for testing.
+
+For implementation, we are using the [Encoder-Decoder Sequence to Sequence LSTM architecture](https://towardsdatascience.com/understanding-encoder-decoder-sequence-to-sequence-model-679e04af4346) with the [Beam Search](https://towardsdatascience.com/an-intuitive-explanation-of-beam-search-9b1d744e7a0f) algorithm.
