@@ -1,3 +1,4 @@
+# A part of this code is inspired by Professor Lee (Stefan Lee) from OSU course CS539.
 import numpy as np
 import pandas as pd
 import pickle
@@ -24,7 +25,7 @@ customize_threshold = 0.5
 
 def main():
     # create the field object
-    EN_TEXT = Field(tokenize=tokenize_en)
+    EN_TEXT = Field(tokenize=tokenize_en, init_token = '<sos>', eos_token = '<eos>', lower = True)
 
     train_file = 'data/train.csv'
     validation_file = 'data/val.csv'
@@ -40,8 +41,9 @@ def main():
     # build  the vocabulary
     EN_TEXT.build_vocab(train, val)
     
+    BATCH_SIZE = 20
     # generate the iterator
-    train_iter = BucketIterator(train, batch_size=20, sort_key=lambda x: len(x.sentenc1), shuffle=True)
+    train_iter, val_iter = BucketIterator.splits((train, val), batch_size=BATCH_SIZE, device = device, sort_key=lambda x: len(x.sentence1), shuffle=True)
     
     # =============================================================================
     # to print out the tokenized value in the first batc, use the following codes:
@@ -49,6 +51,16 @@ def main():
     # batch = next(iter(train_iter))
     # print(batch.sentence1)
     # =============================================================================
+
+    input_size = 0
+    dest_size = 0
+    word_embed_dim = 256
+    hidden_dim = 512
+    dropout_rate = 0.5
+
+    enc = Encoder(input_size, hidden_dim, hidden_dim, word_embed_dim, dropout_rate)
+    dec = Decoder(dest_size, hidden_dim, hidden_dim, word_embed_dim, dropout_rate)
+    model = Seq2Seq(enc, dec, device).to(device)
 
 def tokenize_en(sentence):
     return [token.text for token in en.tokenizer(sentence)]
@@ -58,6 +70,80 @@ def load_data(df, threshold):
     df['remove'] = [row <= threshold for row in df['score']]
     rslt_df = df[df['remove'] != True] 
     return rslt_df[['sentence1', 'sentence2']]
+
+class Encoder(nn.Module):
+    def __init__(self, input_size, encode_hidden_dim, decode_hidden_dim, embedding_dim, dropout=0.5):
+        super().__init__()
+        
+        self.encode_hidden_dim = encode_hidden_dim
+
+        self.embedding = nn.Embedding(input_size, embedding_dim)
+        self.lstm = nn.LSTM(input_size=embedding_dim,
+            hidden_size=encode_hidden_dim,
+            num_layers=1,
+            bidirectional=True)
+        self.fc = nn.Linear(encode_hidden_dim * 2, decode_hidden_dim)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, input):
+
+        embedded = self.dropout(self.embedding(input))
+
+        encode_hts, _ = self.lstm(embedded)
+
+        last_forward = enc_hidden_states[-1, :, :self.encode_hidden_dim]
+        first_backward = enc_hidden_states[0, :, self.encode_hidden_dim:]
+
+        out = F.relu(self.fc(torch.cat((last_forward, first_backward), dim = 1)))
+
+        return encode_hts, out
+
+class Decoder(nn.Module):
+    def __init__(self, output_dim, encode_hidden_dim, decode_hidden_dim, embedding_dim, dropout=0.5,):
+        super().__init__()
+
+        self.output_dim = output_dim
+        
+        self.embedding = nn.Embedding(output_dim, embedding_dim)
+        self.lstm = nn.LSTM(embedding_dim, decode_hidden_dim)
+        self.fc_out = nn.Linear((encode_hidden_dim * 2) + decode_hidden_dim, output_dim)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, input, hidden, encoder_outputs):
+
+        input = input.unsqueeze(0)        
+        embedded = self.dropout(self.embedding(input))
+        
+        output, hidden = self.lstm(embedded, hidden.unsqueeze(0))
+        
+        prediction = self.fc_out(output)
+        
+        return prediction
+
+class Seq2Seq(nn.Module):
+    def __init__(self, encoder, decoder, device):
+        super().__init__()
+        
+        self.encoder = encoder
+        self.decoder = decoder
+        self.device = device
+        
+    def forward(self, input_sentence, target_sentence):
+        
+        batch_size = input_sentence.shape[1]
+        target_len = target_sentence.shape[0]
+        target_vocab_size = self.decoder.output_dim
+        
+        outputs = torch.zeros(target_len, batch_size, target_vocab_size).to(self.device)
+        
+        encoder_outputs, hidden = self.encoder(input_sentence)
+                
+        for t in range(1, target_len):
+            output, hidden, a = self.decoder(target_sentence[t-1], hidden, encoder_outputs)
+            outputs[t] = output
+
+        return outputs
+
 
 
 if __name__ == "__main__":
