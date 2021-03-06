@@ -61,6 +61,19 @@ def main():
     enc = Encoder(input_size, hidden_dim, hidden_dim, word_embed_dim, dropout_rate)
     dec = Decoder(dest_size, hidden_dim, hidden_dim, word_embed_dim, dropout_rate)
     model = Seq2Seq(enc, dec, device).to(device)
+    
+    epoch = 10
+    
+    parameters = filter(lambda p: p.requires_grad, model.parameters())
+    optimizer = torch.optim.Adam(params = parameters)
+    
+    tag_pad_idx = EN_TEXT.vocab.stoi[EN_TEXT.pad_token]
+    crit = nn.CrossEntropyLoss(ignore_index = tag_pad_idx).to(device)
+    
+    # start training
+    for i in range(epoch):
+        t_loss, t_acc = training(model, train_iter, optimizer, crit, tag_pad_idx)
+        
 
 def tokenize_en(sentence):
     return [token.text for token in en.tokenizer(sentence)]
@@ -70,6 +83,19 @@ def load_data(df, threshold):
     df['remove'] = [row <= threshold for row in df['score']]
     rslt_df = df[df['remove'] != True] 
     return rslt_df[['sentence1', 'sentence2']]
+
+def training(model, train_iter, optimizer, crit, tag_pad_idx):
+    model.train()
+    epoch_train_loss = 0
+    epoch_test_loss = 0
+    
+    for batch in train_iter:
+        
+        batch_sentence1 = batch.sentence1
+
+
+
+
 
 class Encoder(nn.Module):
     def __init__(self, input_size, encode_hidden_dim, decode_hidden_dim, embedding_dim, dropout=0.5):
