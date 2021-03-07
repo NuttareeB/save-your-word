@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 import pickle
+import math
 import spacy
 import en_core_web_sm
 import torch
@@ -52,14 +53,16 @@ def main():
     # print(batch.sentence1)
     # =============================================================================
 
-    input_size = 0
-    dest_size = 0
+    input_size = len(EN_TEXT.vocab)
+    dest_size = len(EN_TEXT.vocab)
     word_embed_dim = 256
     hidden_dim = 512
     dropout_rate = 0.5
 
+    attn = SingleQueryScaledDotProductAttention(hidden_dim, hidden_dim)
+
     enc = Encoder(input_size, hidden_dim, hidden_dim, word_embed_dim, dropout_rate)
-    dec = Decoder(dest_size, hidden_dim, hidden_dim, word_embed_dim, dropout_rate)
+    dec = Decoder(dest_size, hidden_dim, hidden_dim, attn, word_embed_dim, dropout_rate)
     model = Seq2Seq(enc, dec, device).to(device)
     
     epoch = 10
@@ -87,7 +90,7 @@ def load_data(df, threshold):
 
 def training(model, iterator, optimizer, crit):
     model.train()
-    epoch_train_loss = 0
+    epoch_loss = 0
     
     for batch in iterator:
         
@@ -135,6 +138,37 @@ def evaluate(model, val_iter, crit, epoch):
             epoch_loss += loss.item()
     return epoch_loss / len(val_iter)
 
+class SingleQueryScaledDotProductAttention(nn.Module):    
+    def __init__(self, enc_hid_dim, dec_hid_dim, kq_dim=512):
+        super().__init__()
+        self.linear_q = nn.Linear(dec_hid_dim, kq_dim)
+        self.linear_k = nn.Linear(enc_hid_dim*2, kq_dim)
+        self.kq_dim = kq_dim
+        self.dec_hid_dim = dec_hid_dim
+
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, hidden, encoder_outputs):
+
+        q = self.linear_q(hidden)
+        k_t = self.linear_k(encoder_outputs)
+        v_t = encoder_outputs
+
+        q_batch = q.unsqueeze(1)
+        k = torch.transpose(k_t, 0, 1)
+        k = torch.transpose(k, 1, 2)
+        s = torch.bmm(q_batch, k) / math.sqrt(self.kq_dim)
+
+        alpha = self.softmax(s)
+        attended_val = torch.bmm(alpha, torch.transpose(v_t, 0, 1))
+        
+        alpha = alpha[:,-1,:]
+        attended_val = attended_val[:,-1,:]
+
+        assert attended_val.shape == (hidden.shape[0], encoder_outputs.shape[2])
+        assert alpha.shape == (hidden.shape[0], encoder_outputs.shape[0])
+        
+        return attended_val, alpha
 
 
 class Encoder(nn.Module):
@@ -144,7 +178,7 @@ class Encoder(nn.Module):
         self.encode_hidden_dim = encode_hidden_dim
 
         self.embedding = nn.Embedding(input_size, embedding_dim)
-        self.lstm = nn.LSTM(input_size=embedding_dim,
+        self.rnn = nn.GRU(input_size=embedding_dim,
             hidden_size=encode_hidden_dim,
             num_layers=1,
             bidirectional=True)
@@ -155,23 +189,26 @@ class Encoder(nn.Module):
 
         embedded = self.dropout(self.embedding(input))
 
-        encode_hts, _ = self.lstm(embedded)
+        encode_hts, _ = self.rnn(embedded)
 
-        last_forward = enc_hidden_states[-1, :, :self.encode_hidden_dim]
-        first_backward = enc_hidden_states[0, :, self.encode_hidden_dim:]
+        last_forward = encode_hts[-1, :, :self.encode_hidden_dim]
+        first_backward = encode_hts[0, :, self.encode_hidden_dim:]
 
         out = F.relu(self.fc(torch.cat((last_forward, first_backward), dim = 1)))
 
         return encode_hts, out
 
 class Decoder(nn.Module):
-    def __init__(self, output_dim, encode_hidden_dim, decode_hidden_dim, embedding_dim, dropout=0.5,):
+    def __init__(self, output_dim, encode_hidden_dim, decode_hidden_dim, attn, embedding_dim, dropout=0.5,):
         super().__init__()
 
-        self.output_dim = output_dim
+        self.output_dim = output_dim   
+        print("decode_hidden_dim:", decode_hidden_dim)
+        print("embedding_dim:", embedding_dim)
         
+        self.attention = attn
         self.embedding = nn.Embedding(output_dim, embedding_dim)
-        self.lstm = nn.LSTM(embedding_dim, decode_hidden_dim)
+        self.rnn = nn.GRU(embedding_dim, decode_hidden_dim)
         self.fc_out = nn.Linear((encode_hidden_dim * 2) + decode_hidden_dim, output_dim)
         self.dropout = nn.Dropout(dropout)
     
@@ -179,12 +216,14 @@ class Decoder(nn.Module):
 
         input = input.unsqueeze(0)        
         embedded = self.dropout(self.embedding(input))
+
+        attended_feature, a = self.attention(hidden.squeeze(0), encoder_outputs) 
+
+        output, hidden = self.rnn(embedded, hidden.unsqueeze(0))
         
-        output, hidden = self.lstm(embedded, hidden.unsqueeze(0))
+        prediction = self.fc_out(torch.cat((output, attended_feature.unsqueeze(0)), dim = 2))
         
-        prediction = self.fc_out(output)
-        
-        return prediction
+        return prediction, hidden.squeeze(0), a
 
 class Seq2Seq(nn.Module):
     def __init__(self, encoder, decoder, device):
