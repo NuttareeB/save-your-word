@@ -72,7 +72,8 @@ def main():
     
     # start training
     for i in range(epoch):
-        t_loss, t_acc = training(model, train_iter, optimizer, crit, tag_pad_idx)
+        t_loss = training(model, train_iter, optimizer, crit)
+        print("epcoh:", i+1, "training loss:", t_loss)
         
 
 def tokenize_en(sentence):
@@ -84,14 +85,32 @@ def load_data(df, threshold):
     rslt_df = df[df['remove'] != True] 
     return rslt_df[['sentence1', 'sentence2']]
 
-def training(model, train_iter, optimizer, crit, tag_pad_idx):
+def training(model, iterator, optimizer, crit):
     model.train()
     epoch_train_loss = 0
-    epoch_test_loss = 0
     
-    for batch in train_iter:
+    for batch in iterator:
         
-        batch_sentence1 = batch.sentence1
+        src = batch.sentence1
+        trg = batch.sentence2
+        
+        optimizer.zero_grad()
+        
+        output = model(src, trg)
+        
+        output_dim = output.shape[-1]
+        output = output[1:].view(-1, output_dim)
+        trg = trg[1:].view(-1)
+        
+        loss = crit(output, trg)
+        
+        loss.backward() 
+        
+        optimizer.step()
+        
+        epoch_loss += loss.item()
+        
+    return epoch_loss/ len(iterator)
 
 def evaluate(model, val_iter, crit, epoch):
     
@@ -115,8 +134,6 @@ def evaluate(model, val_iter, crit, epoch):
 
             epoch_loss += loss.item()
     return epoch_loss / len(val_iter)
-
-
 
 
 
