@@ -93,6 +93,29 @@ def training(model, train_iter, optimizer, crit, tag_pad_idx):
         
         batch_sentence1 = batch.sentence1
 
+def evaluate(model, val_iter, crit, epoch):
+    
+    model.eval()
+    
+    epoch_loss = 0
+    
+    with torch.no_grad():
+        for i, batch in enumerate(val_iter):
+            src = batch.sentence1
+            trg = batch.sentence2
+
+            output = model(src, trg) 
+
+            output_dim = output.shape[-1]
+            
+            output = output[1:].view(-1, output_dim)
+            trg = trg[1:].view(-1)
+
+            loss = crit(output, trg)
+
+            epoch_loss += loss.item()
+    return epoch_loss / len(val_iter)
+
 
 
 
