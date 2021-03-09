@@ -45,7 +45,6 @@ parser.add_argument('--eval', dest='eval', action='store_true', default=False)
 args = parser.parse_args()
 
 
-debug_temp = None
 
 def main():
     logging.info('Using device: {}'.format(dev))  
@@ -57,7 +56,7 @@ def main():
     validation_file = 'data/val.csv'
     
     data = load_data(df, customize_threshold)
-    train, val = train_test_split(data, test_size=0.1)
+    train, val = train_test_split(data, test_size=0.1, shuffle=True)
     train.to_csv(train_file, index=False)
     val.to_csv(validation_file, index=False)
     
@@ -126,10 +125,8 @@ def main():
     #bleu = calculate_bleu(val, EN_TEXT, model, dev)
     #logging.info(f'| Test Loss: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} | Test BLEU {bleu*100:.2f}')
     
-    global debug_temp
-    debug_temp = val
     q = "Thank you"
-    src = vars(val.examples[10])['sentence1']
+    src = vars(val.examples[200])['sentence1']
     q = [a for a in q.split()]
     translation, attn = generateSentence(src, EN_TEXT, model, dev)
     
@@ -203,13 +200,15 @@ def evaluate(model, val_iter, crit, epoch):
             epoch_loss += loss.item()
     return epoch_loss / len(val_iter)
 
-def beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, beams=5, max_len=50):
+# TODO: we need to find the proper max_len from our dataset!!
+def beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, eos_i, src_len, beams=5, max_len=50):
     tensor = torch.LongTensor([trg_indexes[-1]]).to(device)
     output = tensor
     num_layers = model.decoder._modules['rnn'].num_layers
     criterian = nn.LogSoftmax(dim=1)
 
     output, hidden_state, attention = model.decoder(tensor, hidden, encoder_outputs)
+    output[0, 0, eos_i] = 0
     attentions[0] = attention.squeeze()
     probs = criterian(output[-1])
     hidden_state = torch.cat([hidden_state]*beams, 0)
@@ -221,7 +220,10 @@ def beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, 
         tensor = topk_idxs.squeeze(0)
         
         output, ht, at = model.decoder(tensor, hidden_state, encoder_outputs)
+        if i < src_len:
+            output[0, 0, eos_i] = 0
        # attentions[i] = at.squeeze()
+       
         probs = criterian(output[-1])
         cum_log_probs = probs + topk_probs.view((beams, 1))
         topk_probs, topk_idxs = torch.topk(cum_log_probs.view(-1), beams)
@@ -257,7 +259,7 @@ def generateSentence(sentence, src_field, model, device, max_len=50):
     src_tensor = torch.LongTensor(src_indexes).unsqueeze(1).to(device)
     
     src_len = torch.LongTensor([len(src_indexes)])
-    
+    #print(src_len)
     with torch.no_grad():
         encoder_outputs, hidden = model.encoder(src_tensor)
     
@@ -267,7 +269,8 @@ def generateSentence(sentence, src_field, model, device, max_len=50):
     beam = 1
     
     attentions = torch.zeros(max_len, beam, len(src_indexes)).to(device)
-    outputs, max_i = beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, beam, max_len)
+    eos_i =  src_field.vocab.stoi[src_field.eos_token]
+    outputs, max_i = beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, eos_i, src_len, beam, max_len)
     
     attentions[:, -1, :] = attentions[:, max_i, :]
     
