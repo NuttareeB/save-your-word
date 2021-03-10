@@ -36,14 +36,16 @@ torch.manual_seed(0)
 
 df = pd.read_table('data/2016_Oct_10--2017_Jan_08_full.txt', names=('score', 'sentence1', 'sentence2'))
 
-print("max length of sentence1 in dataset: ", df.sentence1.map(len).max())
-print("max length of sentence2 in dataset: ", df.sentence2.map(len).max())
-# Index where sentence1 is longest
-idx1 = df.sentence1.apply(len).idxmax()
-# Index where sentence2 is longest
-idx2 = df.sentence2.apply(len).idxmax()
-print("longest sent1: ", df.loc[idx1].sentence1)
-print("longest sent2: ", df.loc[idx2].sentence2)
+# print("max length of sentence1 in dataset: ", df.sentence1.map(len).max())
+# print("max length of sentence2 in dataset: ", df.sentence2.map(len).max())
+# # Index where sentence1 is longest
+# idx1 = df.sentence1.apply(len).idxmax()
+# # Index where sentence2 is longest
+# idx2 = df.sentence2.apply(len).idxmax()
+# print(idx1)
+# print(idx2)
+# print("longest sent1: ", df.loc[idx1].sentence1)
+# print("longest sent2: ", df.loc[idx2].sentence2)
 
 en = spacy.load('en_core_web_sm')
 dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -66,11 +68,29 @@ def main():
     test_file = 'data/test.csv'
 
     data = load_data(df, customize_threshold)
+
+    for index, row in data.iterrows():
+        if (len(row.sentence2) < len(row.sentence1)):
+            row.sentence2, row.sentence1 = row.sentence1, row.sentence2
+
     train, test = train_test_split(data, test_size=0.1, shuffle=True)
     train, val = train_test_split(train, test_size=0.1, shuffle=True)
     train.to_csv(train_file, index=False)
     val.to_csv(validation_file, index=False)
     test.to_csv(test_file, index=False)
+
+    train_df = pd.read_csv(train_file, names=('sentence1', 'sentence2'))
+
+    print("max length of sentence1 in dataset: ", train_df.sentence1.map(len).max())
+    print("max length of sentence2 in dataset: ", train_df.sentence2.map(len).max())
+    # Index where sentence1 is longest
+    idx1 = train_df.sentence1.apply(len).idxmax()
+    # Index where sentence2 is longest
+    idx2 = train_df.sentence2.apply(len).idxmax()
+    # print(idx1)
+    # print(idx2)
+    # print("longest sent1: ", train_df.loc[idx1].sentence1)
+    # print("longest sent2: ", train_df.loc[idx2].sentence2)
 
     data_fields = [('sentence1', EN_TEXT), ('sentence2', EN_TEXT)]
     train, val, test = TabularDataset.splits(path='./', train=train_file, validation=validation_file,
@@ -253,8 +273,7 @@ def beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, 
         strs = []
         at = at.squeeze()
         for r, c in beam_index:
-
-            if c == eos_i:
+            if i < src_len + 10 and c == eos_i:
                 continue
 
             new_ht.append(ht[r])
