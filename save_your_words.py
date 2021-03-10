@@ -38,7 +38,7 @@ df = pd.read_table('data/2016_Oct_10--2017_Jan_08_full.txt', names=('score', 'se
 en = spacy.load('en_core_web_sm')
 dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-customize_threshold = 0.7
+customize_threshold = 0.5
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--eval', dest='eval', action='store_true', default=False)  
@@ -126,7 +126,7 @@ def main():
     #logging.info(f'| Test Loss: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} | Test BLEU {bleu*100:.2f}')
     
     q = "Thank you"
-    src = vars(val.examples[200])['sentence1']
+    src = vars(val.examples[115])['sentence1']
     q = [a for a in q.split()]
     translation, attn = generateSentence(src, EN_TEXT, model, dev)
     
@@ -204,46 +204,68 @@ def evaluate(model, val_iter, crit, epoch):
 def beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, eos_i, src_len, beams=5, max_len=50):
     tensor = torch.LongTensor([trg_indexes[-1]]).to(device)
     output = tensor
-    num_layers = model.decoder._modules['rnn'].num_layers
+    
     criterian = nn.LogSoftmax(dim=1)
-
+    print("1st hidden size:", hidden.shape)
+    
     output, hidden_state, attention = model.decoder(tensor, hidden, encoder_outputs)
-    output[0, 0, eos_i] = 0
     attentions[0] = attention.squeeze()
     probs = criterian(output[-1])
+    
     hidden_state = torch.cat([hidden_state]*beams, 0)
     encoder_outputs = torch.cat([encoder_outputs]*beams, 1)
     topk_probs, topk_idxs = torch.topk(probs, beams)
     decodedStrings = topk_idxs.view(beams, 1)
     last_prop = []
+    
+    print("src length:", src_len)
+    
     for i in range(1, max_len):
         tensor = topk_idxs.squeeze(0)
-        
         output, ht, at = model.decoder(tensor, hidden_state, encoder_outputs)
-        if i < src_len:
-            output[0, 0, eos_i] = 0
-       # attentions[i] = at.squeeze()
+        
+        probs = criterian(output[-1])        
        
-        probs = criterian(output[-1])
         cum_log_probs = probs + topk_probs.view((beams, 1))
-        topk_probs, topk_idxs = torch.topk(cum_log_probs.view(-1), beams)
+        topk_probs, topk_idxs = torch.topk(cum_log_probs.view(-1), beams*(beams+1))
+        
         beam_index = np.array(np.unravel_index(topk_idxs.cpu().numpy(), cum_log_probs.shape)).T
         new_ht = []
-        for r, c in beam_index:
-            new_ht.append(ht[r])
-        hidden_state = torch.stack(new_ht)
+        
+        
+        j=0 
         strs = []
         at = at.squeeze()
-        for j, (r, c) in enumerate(beam_index):
+        for r, c in beam_index:
+            
+            if c == eos_i:
+                continue
+            
+            new_ht.append(ht[r])
             topk_idxs[j] = c
+            topk_probs[j] = cum_log_probs[r][c]
+            
             strs.append(torch.cat([decodedStrings[r], torch.tensor([c]).to(device)]))
             attentions[i][j] = at[r]
+            j+=1
+            
+            if j == beams:
+                break
+            
+        hidden_state = torch.stack(new_ht)
         decodedStrings = strs
+        
+        #topk_probs, topk_idxs = topk_idxs.topk(beams)
+        topk_idxs = topk_idxs[:beams]
+        topk_probs = topk_probs[:beams]
+        
         topk_idxs = topk_idxs.unsqueeze(0).to(device)
         last_prop = topk_probs.to(device)
+    
     max_i = last_prop.argmax()
     output = decodedStrings[max_i]
     return output, max_i
+
 def generateSentence(sentence, src_field, model, device, max_len=50):
     
     model.eval()
@@ -266,7 +288,7 @@ def generateSentence(sentence, src_field, model, device, max_len=50):
     trg_indexes = [src_field.vocab.stoi[src_field.init_token]]
     
     # start beam search
-    beam = 1
+    beam = 3
     
     attentions = torch.zeros(max_len, beam, len(src_indexes)).to(device)
     eos_i =  src_field.vocab.stoi[src_field.eos_token]

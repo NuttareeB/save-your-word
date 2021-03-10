@@ -7,3 +7,5 @@ Through this project we want to represent ideas in a linguistically more elegant
 We are using the [Language-Net](https://lanwuwei.github.io/Twitter-URL-Corpus/) dataset which is a collection of sentence level paraphrases from Twitter. Their corpus is the largest up to date with 51,524 human annotated sentence pairs: 42200 for training and 9324 for testing.
 
 For implementation, we are using the [Encoder-Decoder Sequence to Sequence LSTM architecture](https://towardsdatascience.com/understanding-encoder-decoder-sequence-to-sequence-model-679e04af4346) with the [Beam Search](https://towardsdatascience.com/an-intuitive-explanation-of-beam-search-9b1d744e7a0f) algorithm.
+
+The traind [model](https://drive.google.com/file/d/1SlmKN5W5x_X2miw90siIn76LRCGN2ixD/view?usp=sharing) can be downloaded here.
