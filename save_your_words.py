@@ -54,6 +54,7 @@ customize_threshold = 0.9
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--eval', dest='eval', action='store_true', default=False)
+parser.add_argument('--topp', dest='topp', action='store_true', default=False)
 args = parser.parse_args()
 
 
@@ -70,7 +71,7 @@ def main():
     data = load_data(df, customize_threshold)
 
     for index, row in data.iterrows():
-        if (len(row.sentence2) < len(row.sentence1)):
+        if len(row.sentence2) < len(row.sentence1):
             row.sentence2, row.sentence1 = row.sentence1, row.sentence2
 
     train, test = train_test_split(data, test_size=0.1, shuffle=True)
@@ -159,9 +160,9 @@ def main():
     # logging.info(f'| Test Loss: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} | Test BLEU {bleu * 100:.2f}')
 
     random.seed(42)
-    for i in range(10):
-        example_id = random.randint(0, len(test))
-        src = vars(test.examples[example_id])['sentence1']
+    for i in range(11):
+        # example_id = random.randint(0, len(test))
+        src = vars(test.examples[i + 1])['sentence1']
         translation, attention = generateSentence(src, EN_TEXT, model, dev)
 
         print("\n--------------------")
@@ -302,44 +303,36 @@ def beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, 
     return output, max_i
 
 
-def generateSentence(sentence, src_field, model, device, max_len=50):
-    model.eval()
+def toppSampling(model, trg_indexes, encoder_outputs, hidden, attentions, device, eos_i, src_len, max_len=50):
+    tensor = torch.LongTensor([trg_indexes[-1]]).to(device)
+    output = tensor
+    sampling_criterion = nn.Softmax(dim=1)
+    # print("1st hidden size:", hidden.shape)
 
-    # tokens = tokenize_sentence(src_field, sentence)
+    words = []
 
-    tokens = sentence
+    p = 0.025
+    temperature = 5
+    for i in range(max_len):
+        output, ht, attention = model.decoder(tensor, hidden, encoder_outputs)
+        attentions[i] = attention.squeeze()
+        logits = sampling_criterion(output[-1] / temperature)
+        # Top-p Sampling
+        sorted_wts, sorted_indices = torch.sort(logits, descending=True)
+        cumulative_probs = torch.cumsum(input=sorted_wts, dim=1).squeeze()
+        sorted_indices_to_remove = cumulative_probs > p
+        sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
+        sorted_indices_to_remove[0] = 0
+        indices_to_remove = sorted_indices[sorted_indices_to_remove.unsqueeze(0)]
+        logits.squeeze()[indices_to_remove] = 0
+        logits /= logits.sum()
+        prob_dist = torch.distributions.Categorical(logits)
+        w_t = prob_dist.sample().unsqueeze(0)
 
-    tokens = [src_field.init_token] + tokens + [src_field.eos_token]
+        words.append(w_t)
+        hidden = ht
 
-    src_indexes = [src_field.vocab.stoi[token] for token in tokens]
-
-    src_tensor = torch.LongTensor(src_indexes).unsqueeze(1).to(device)
-
-    src_len = torch.LongTensor([len(src_indexes)])
-    # print(src_len)
-    with torch.no_grad():
-        encoder_outputs, hidden = model.encoder(src_tensor)
-
-    trg_indexes = [src_field.vocab.stoi[src_field.init_token]]
-
-    # start beam search
-    beam = 3
-
-    attentions = torch.zeros(max_len, beam, len(src_indexes)).to(device)
-    eos_i = src_field.vocab.stoi[src_field.eos_token]
-    outputs, max_i = beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, eos_i, src_len, beam,
-                                max_len)
-
-    attentions[:, -1, :] = attentions[:, max_i, :]
-
-    for trg_i in outputs:
-        trg_indexes.append(trg_i)
-
-        if trg_i == src_field.vocab.stoi[src_field.eos_token]:
-            break
-
-    trg_tokens = [src_field.vocab.itos[i] for i in trg_indexes]
-    return trg_tokens[1:], attentions[:len(trg_tokens) - 1]
+    return words
 
 
 def generateSentence(sentence, src_field, model, device, max_len=50):
@@ -361,22 +354,32 @@ def generateSentence(sentence, src_field, model, device, max_len=50):
         encoder_outputs, hidden = model.encoder(src_tensor)
 
     trg_indexes = [src_field.vocab.stoi[src_field.init_token]]
-
-    # start beam search
-    beam = 3
-
-    attentions = torch.zeros(max_len, beam, len(src_indexes)).to(device)
     eos_i = src_field.vocab.stoi[src_field.eos_token]
-    outputs, max_i = beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, eos_i, src_len, beam,
-                                max_len)
 
-    attentions[:, -1, :] = attentions[:, max_i, :]
+    if args.topp:
+        attentions = torch.zeros(max_len, 1, len(src_indexes)).to(device)
 
-    for trg_i in outputs:
-        trg_indexes.append(trg_i)
+        trg_indexes = toppSampling(model, trg_indexes, encoder_outputs, hidden, attentions, device, eos_i, src_len,
+                                   max_len)
 
-        if trg_i == src_field.vocab.stoi[src_field.eos_token]:
-            break
+
+    else:
+        # start beam search
+        beam = 2
+
+        attentions = torch.zeros(max_len, beam, len(src_indexes)).to(device)
+
+        outputs, max_i = beamsearch(model, trg_indexes, encoder_outputs, hidden, attentions, device, eos_i, src_len,
+                                    beam,
+                                    max_len)
+
+        attentions[:, -1, :] = attentions[:, max_i, :]
+
+        for trg_i in outputs:
+            trg_indexes.append(trg_i)
+
+            if trg_i == src_field.vocab.stoi[src_field.eos_token]:
+                break
 
     trg_tokens = [src_field.vocab.itos[i] for i in trg_indexes]
     return trg_tokens[1:], attentions[:len(trg_tokens) - 1]
